@@ -1,0 +1,169 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Deploying Janus Server over AWS",
+  "Parameters": {
+    "KeyName": {
+      "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+    },
+    "InstanceType": {
+      "Description": "Demos Machine EC2 instance type",
+      "Type": "String",
+      "Default": "t2.xlarge",
+      "AllowedValues": [
+        "t2.large",
+        "t2.xlarge",
+        "t2.2xlarge",
+        "m5.xlarge",
+        "m5.2xlarge",
+        "m5.4xlarge",
+        "m5.12xlarge",
+        "m5.24xlarge",
+        "m4.xlarge",
+        "m4.2xlarge",
+        "m4.4xlarge",
+        "m4.10xlarge",
+        "m4.16xlarge"
+      ],
+      "ConstraintDescription": "must be a valid EC2 instance type."
+    },
+  },
+  "Mappings": {
+    "RegionMap": {
+      "eu-west-2": {
+        "AMI1": "ami-0b0a60c0a2bd40612"
+      }
+    }
+  },
+  "Resources": {
+    "WebServerInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Fn::FindInMap": [
+            "RegionMap",
+            {
+              "Ref": "AWS::Region"
+            },
+            "AMI1"
+          ]
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "SecurityGroups": [{
+          "Ref": "WebServerSecurityGroup"
+        }],
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "Tags": [{
+          "Key": "Name",
+          "Value": {
+            "Ref": "AWS::StackName"
+          }
+        }],
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "", [
+                "#!/bin/bash -xe\n",
+                "source /home/ubuntu/.bashrc\n",
+                "export HOME=/home/ubuntu\n",
+                "apt-get update\n",
+                "apt-get upgrade -y\n",
+
+                "wget http://launchpadlibrarian.net/368696874/gtk-doc-tools_1.28-1_all.deb\n",
+                "dpkg -i gtk-doc-tools_1.28-1_all.deb\n",
+                "apt-get update\n",
+                "apt-get install -f -y\n",
+
+                "apt-get install libmicrohttpd-dev libjansson-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev liblua5.3-dev pkg-config gengetopt libtool automake cmake doxygen graphviz -y\n",
+
+                "apt --fix-broken install -y\n",
+
+                "git clone https://gitlab.freedesktop.org/libnice/libnice\n",
+                "cd libnice\n",
+                "./autogen.sh\n",
+                "./configure --prefix=/usr\n",
+                "make && make install\n",
+                "cd ..\n",
+
+                "wget https://github.com/cisco/libsrtp/archive/v2.1.0.tar.gz\n",
+                "tar xfv v2.1.0.tar.gz\n",
+                "cd libsrtp-2.1.0\n",
+                "./configure --prefix=/usr --enable-openssl\n",
+                "make shared_library && make install\n",
+                "cd ..\n",
+
+                "git clone https://libwebsockets.org/repo/libwebsockets\n",
+                "cd libwebsockets\n",
+                "# If you want the stable version of libwebsockets, uncomment the next line\n",
+                "# git checkout v2.4-stable\n",
+                "mkdir build\n",
+                "cd build\n",
+                "# See https://github.com/meetecho/janus-gateway/issues/732 re: LWS_MAX_SMP\n",
+                "cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS=\"-fpic\" ..\n",
+                "make && make install\n",
+                "cd ..\n",
+
+                "git clone https://github.com/meetecho/janus-gateway.git\n",
+                "cd janus-gateway\n",
+                "sh autogen.sh\n",
+                "./configure --prefix=/opt/janus\n",
+                "make\n",
+                "make install\n",
+                "make configs\n",
+                "cd ..\n",
+
+                "/usr/local/bin/cfn-signal -e $? --stack ", {
+                  "Ref": "AWS::StackName"
+                }, " --resource WaitCondition --region ", {
+                  "Ref": "AWS::Region"
+                }, "\n"
+              ]
+            ]
+          }
+        },
+        "BlockDeviceMappings": [{
+          "DeviceName": "/dev/sda1",
+          "Ebs": {
+            "VolumeType": "io1",
+            "Iops": "200",
+            "DeleteOnTermination": "true",
+            "VolumeSize": "100"
+          }
+        }]
+      }
+    },
+    "WaitCondition": {
+      "Type": "AWS::CloudFormation::WaitCondition",
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Timeout": "PT15M",
+          "Count": "1"
+        }
+      }
+    },
+    "WebServerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Full open access",
+        "SecurityGroupIngress": [{
+            "IpProtocol": "udp",
+            "FromPort": "0",
+            "ToPort": "65535",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "0",
+            "ToPort": "65535",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ]
+      }
+    }
+  }
+}
